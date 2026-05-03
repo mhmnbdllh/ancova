@@ -748,6 +748,7 @@ def main():
     <div class="main-hdr">
         <h1>📊 ANCOVA Analysis Suite</h1>
         <p>Analysis of Covariance · SPSS General Linear Model (GLM) · Type III Sum of Squares</p>
+        <p>Developed by Muhaimin Abdullah.</p>
     </div>""", unsafe_allow_html=True)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
