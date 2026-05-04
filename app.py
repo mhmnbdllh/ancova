@@ -334,6 +334,16 @@ def run_ancova(df, dep, grp, covs, alpha=0.05):
     pairs = list(itertools.combinations(groups, 2))
     k     = len(pairs)
 
+    # SPSS uses method-specific t_crit for CI width:
+    #   LSD    : t( alpha/2,          df_resid )
+    #   Bonf   : t( alpha/(2*k),      df_resid )  — Bonferroni-adjusted alpha per comparison
+    #   Sidak  : t( alpha_sidak/2,    df_resid )  — Sidak-adjusted alpha per comparison
+    #              where alpha_sidak = 1 - (1-alpha)^(1/k)
+    t_crit_lsd   = float(stats.t.ppf(1 - alpha / 2,           df_resid))
+    t_crit_bonf  = float(stats.t.ppf(1 - alpha / (2 * k),     df_resid))
+    alpha_sidak  = 1 - (1 - alpha) ** (1 / k)
+    t_crit_sidak = float(stats.t.ppf(1 - alpha_sidak / 2,     df_resid))
+
     pw_lsd  = []
     pw_bonf = []
     pw_sidak= []
@@ -345,27 +355,47 @@ def run_ancova(df, dep, grp, covs, alpha=0.05):
         # SPSS SE for difference: sqrt( (c1-c2)'(X'X)^-1(c1-c2) * MS_error )
         se_d = float(np.sqrt(c_d @ XtX_inv @ c_d * ms_error))
         t_d  = diff / se_d if se_d > 0 else np.nan
-        p_lsd_val  = float(2 * (1 - stats.t.cdf(abs(t_d), df_resid)))
-        p_bonf_val = float(min(p_lsd_val * k, 1.0))
-        p_sidak_val= float(1 - (1 - p_lsd_val) ** k)
-        ci_l = diff - t_crit * se_d
-        ci_u = diff + t_crit * se_d
+        # Unadjusted (LSD) p-value
+        p_lsd_val   = float(2 * (1 - stats.t.cdf(abs(t_d), df_resid)))
+        # Bonferroni: multiply raw p by number of pairs, cap at 1
+        p_bonf_val  = float(min(p_lsd_val * k, 1.0))
+        # Sidak: 1 - (1 - p_raw)^k
+        p_sidak_val = float(1 - (1 - p_lsd_val) ** k)
 
-        base = {"(I) Group": g1, "(J) Group": g2,
-                "Mean Diff (I-J)": diff, "Std. Error": se_d,
-                "95% CI Lower": ci_l, "95% CI Upper": ci_u}
+        # Each method uses its own t_crit for CI — SPSS-exact
+        ci_lsd_l   = diff - t_crit_lsd   * se_d
+        ci_lsd_u   = diff + t_crit_lsd   * se_d
+        ci_bonf_l  = diff - t_crit_bonf  * se_d
+        ci_bonf_u  = diff + t_crit_bonf  * se_d
+        ci_sidak_l = diff - t_crit_sidak * se_d
+        ci_sidak_u = diff + t_crit_sidak * se_d
 
-        pw_lsd.append({**base, "Sig. (LSD)": p_lsd_val})
-        pw_bonf.append({**base, "Sig. (Bonferroni)": p_bonf_val})
-        pw_sidak.append({**base, "Sig. (Sidak)": p_sidak_val})
+        pw_lsd.append({"(I) Group": g1, "(J) Group": g2,
+                       "Mean Diff (I-J)": diff, "Std. Error": se_d,
+                       "Sig. (LSD)": p_lsd_val,
+                       "95% CI Lower": ci_lsd_l, "95% CI Upper": ci_lsd_u})
+        pw_bonf.append({"(I) Group": g1, "(J) Group": g2,
+                        "Mean Diff (I-J)": diff, "Std. Error": se_d,
+                        "Sig. (Bonferroni)": p_bonf_val,
+                        "95% CI Lower": ci_bonf_l, "95% CI Upper": ci_bonf_u})
+        pw_sidak.append({"(I) Group": g1, "(J) Group": g2,
+                         "Mean Diff (I-J)": diff, "Std. Error": se_d,
+                         "Sig. (Sidak)": p_sidak_val,
+                         "95% CI Lower": ci_sidak_l, "95% CI Upper": ci_sidak_u})
 
-        # Also add reverse pair (j vs i) — SPSS shows both directions
-        base_r = {"(I) Group": g2, "(J) Group": g1,
-                  "Mean Diff (I-J)": -diff, "Std. Error": se_d,
-                  "95% CI Lower": -ci_u, "95% CI Upper": -ci_l}
-        pw_lsd.append({**base_r, "Sig. (LSD)": p_lsd_val})
-        pw_bonf.append({**base_r, "Sig. (Bonferroni)": p_bonf_val})
-        pw_sidak.append({**base_r, "Sig. (Sidak)": p_sidak_val})
+        # Reverse pair (J vs I) — SPSS shows both directions
+        pw_lsd.append({"(I) Group": g2, "(J) Group": g1,
+                       "Mean Diff (I-J)": -diff, "Std. Error": se_d,
+                       "Sig. (LSD)": p_lsd_val,
+                       "95% CI Lower": -ci_lsd_u, "95% CI Upper": -ci_lsd_l})
+        pw_bonf.append({"(I) Group": g2, "(J) Group": g1,
+                        "Mean Diff (I-J)": -diff, "Std. Error": se_d,
+                        "Sig. (Bonferroni)": p_bonf_val,
+                        "95% CI Lower": -ci_bonf_u, "95% CI Upper": -ci_bonf_l})
+        pw_sidak.append({"(I) Group": g2, "(J) Group": g1,
+                         "Mean Diff (I-J)": -diff, "Std. Error": se_d,
+                         "Sig. (Sidak)": p_sidak_val,
+                         "95% CI Lower": -ci_sidak_u, "95% CI Upper": -ci_sidak_l})
 
     R["pw_lsd"]   = pd.DataFrame(pw_lsd).sort_values(["(I) Group","(J) Group"]).reset_index(drop=True)
     R["pw_bonf"]  = pd.DataFrame(pw_bonf).sort_values(["(I) Group","(J) Group"]).reset_index(drop=True)
